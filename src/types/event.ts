@@ -178,11 +178,30 @@ export interface ReadinessScoreBreakdown {
   flags: string[];
 }
 
+export interface AgenticTraceStep {
+  step: number;
+  label: string;
+  detail: string;
+  status: 'pending' | 'running' | 'completed' | 'info';
+  timestamp?: string;
+}
+
+export interface WeatherTelemetry {
+  location: string;
+  temperature: string;
+  condition: string;
+  precipitationProbability: number;
+  windSpeed: string;
+  humidity: string;
+  advisory: string;
+}
+
 export interface ExecutableAction {
-  type: 'ADD_BUDGET_ITEM' | 'REBALANCE_BUDGET' | 'REFLOW_TIMELINE' | 'ADD_VENDOR_TASK' | 'SAVE_THEME_IDEA' | 'UPDATE_GUEST_COUNT';
+  type: 'ADD_BUDGET_ITEM' | 'REBALANCE_BUDGET' | 'REFLOW_TIMELINE' | 'ADD_VENDOR_TASK' | 'SAVE_THEME_IDEA' | 'UPDATE_GUEST_COUNT' | 'APPLY_WEATHER_BACKUP' | 'AUTOMATE_TASK' | 'NAVIGATE_TAB';
   label: string;
   description: string;
   payload: Record<string, unknown>;
+  autoExecuted?: boolean;
 }
 
 export interface AIResponsePayload {
@@ -194,4 +213,6 @@ export interface AIResponsePayload {
     assumptionsMade: string[];
     needsHumanConfirmation: string[];
   };
+  agenticTrace?: AgenticTraceStep[];
+  weatherTelemetry?: WeatherTelemetry;
 }

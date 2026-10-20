@@ -19,6 +19,11 @@ import {
   rebalanceBudget,
   convertCurrency
 } from '../utils/calculations';
+import {
+  SupportedLanguage,
+  TranslationDictionary,
+  getTranslation
+} from '../i18n/translations';
 
 interface EventContextType {
   plan: EventPlan;
@@ -29,6 +34,11 @@ interface EventContextType {
   switchPersona: (vertical: VerticalPersona) => void;
   setPriorityMode: (mode: BudgetPriorityMode) => void;
   updateGuestCount: (newCount: number) => void;
+  
+  // Multilingual Language
+  language: SupportedLanguage;
+  setLanguage: (lang: SupportedLanguage) => void;
+  t: TranslationDictionary;
   
   // Budget Actions
   addBudgetItem: (item: Omit<BudgetItem, 'id'>) => void;
@@ -92,6 +102,26 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  // Multilingual Language state
+  const [language, setLanguageState] = useState<SupportedLanguage>(() => {
+    try {
+      const saved = localStorage.getItem('celebrasphere_lang_v1');
+      if (saved && ['en', 'ta', 'hi', 'ml', 'kn', 'te', 'bn', 'mr', 'gu'].includes(saved)) {
+        return saved as SupportedLanguage;
+      }
+    } catch (e) {}
+    return 'en';
+  });
+
+  const setLanguage = useCallback((newLang: SupportedLanguage) => {
+    setLanguageState(newLang);
+    try {
+      localStorage.setItem('celebrasphere_lang_v1', newLang);
+    } catch (e) {}
+  }, []);
+
+  const t = useMemo(() => getTranslation(language), [language]);
 
   // History Stacks for Undo / Redo
   const [history, setHistory] = useState<EventPlan[]>([]);
@@ -438,10 +468,34 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Execute structured AI Action
   const applyExecutableAction = useCallback((action: ExecutableAction) => {
+    if (action.type === 'NAVIGATE_TAB' && action.payload['tab']) {
+      setActiveTab(String(action.payload['tab']));
+      return;
+    }
+
     commitPlan(prev => {
       if (action.type === 'REBALANCE_BUDGET') {
         const { newPlan } = rebalanceBudget(prev);
         return newPlan;
+      }
+      if (action.type === 'APPLY_WEATHER_BACKUP') {
+        const runOfShow = (action.payload['runOfShow'] as RunOfShowBlock[]) || prev.runOfShow;
+        const weatherTask: TimelineTask = {
+          id: `task-weather-${Date.now()}`,
+          title: 'Confirm Waterproof Marquee Tent & Indoor Ballroom AC Load with Venue Lead',
+          category: 'Venue & Logistics',
+          planningWindow: '1w_out',
+          priority: 'critical',
+          dueDate: prev.eventDate,
+          completed: false,
+          owner: 'Operations Coordinator',
+          isAiSuggested: true
+        };
+        return {
+          ...prev,
+          runOfShow,
+          checklistTasks: [weatherTask, ...prev.checklistTasks]
+        };
       }
       if (action.type === 'REFLOW_TIMELINE' && action.payload['runOfShow']) {
         return {
@@ -452,7 +506,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (action.type === 'UPDATE_GUEST_COUNT' && typeof action.payload['newGuestCount'] === 'number') {
         return scaleGuestCosts(prev, action.payload['newGuestCount'] as number);
       }
-      if (action.type === 'ADD_VENDOR_TASK' && action.payload['title']) {
+      if ((action.type === 'ADD_VENDOR_TASK' || action.type === 'AUTOMATE_TASK') && action.payload['title']) {
         const newTask: TimelineTask = {
           id: `task-ai-${Date.now()}`,
           title: String(action.payload['title']),
@@ -510,6 +564,9 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     switchPersona,
     setPriorityMode,
     updateGuestCount,
+    language,
+    setLanguage,
+    t,
     addBudgetItem,
     updateBudgetItem,
     deleteBudgetItem,
@@ -544,6 +601,9 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     switchPersona,
     setPriorityMode,
     updateGuestCount,
+    language,
+    setLanguage,
+    t,
     addBudgetItem,
     updateBudgetItem,
     deleteBudgetItem,

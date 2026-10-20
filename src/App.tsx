@@ -38,7 +38,7 @@ export const AppContent: React.FC = () => {
       />
 
       {/* Main Content Area */}
-      <main id="main-content" tabIndex={-1} className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 focus:outline-none">
+      <main id="main-content" tabIndex={-1} className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-20 sm:pb-8 focus:outline-none overflow-x-hidden">
         {activeTab === 'dashboard' && <DashboardModule />}
         {activeTab === 'budget' && <BudgetModule />}
         {activeTab === 'timeline' && <TimelineModule />}

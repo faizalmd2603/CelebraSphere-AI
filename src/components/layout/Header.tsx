@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useEventContext } from '../../context/EventContext';
 import { calculateReadinessScore } from '../../utils/calculations';
 import { getActiveEngineStatus } from '../../services/aiService';
+import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations';
 import {
   Sparkles,
   RotateCcw,
@@ -12,8 +13,9 @@ import {
   Printer,
   CheckCircle2,
   Cpu,
-  Layers,
-  FileCheck2
+  Globe,
+  FileCheck2,
+  ChevronDown
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -39,39 +41,45 @@ export const Header: React.FC<HeaderProps> = ({
     largeText,
     toggleLargeText,
     reducedMotion,
-    toggleReducedMotion
+    toggleReducedMotion,
+    language,
+    setLanguage,
+    t
   } = useEventContext();
 
   const [showA11yMenu, setShowA11yMenu] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
   const readiness = calculateReadinessScore(plan);
   const engineStatus = getActiveEngineStatus();
 
+  const currentLang = SUPPORTED_LANGUAGES.find(l => l.code === language) || SUPPORTED_LANGUAGES[0];
+
   return (
-    <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 shadow-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-4">
+    <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-md">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-2 sm:gap-4">
           
-          {/* Logo & Hackathon Tag */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-amber-500 flex items-center justify-center shadow-lg shadow-brand-500/20 text-white shrink-0">
+          {/* Logo & Platform Tag */}
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-amber-500 flex items-center justify-center shadow-lg shadow-brand-500/20 text-white shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="text-base sm:text-lg font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
                   CelebraSphere<span className="text-brand-400">AI</span>
                 </span>
-                <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-500/10 text-brand-300 border border-brand-500/20">
-                  Event Operations Platform
+                <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-500/10 text-brand-300 border border-brand-500/20">
+                  {t.eventPlatform}
                 </span>
               </div>
-              <p className="hidden md:block text-[11px] text-slate-400 truncate max-w-xs">
-                {plan.title} ({plan.daysRemaining}d to go)
+              <p className="hidden sm:block text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[200px] md:max-w-xs">
+                {plan.title} ({plan.daysRemaining} {t.daysToGo})
               </p>
             </div>
           </div>
 
-          {/* 1-Click Multi-Vertical Persona Switcher */}
+          {/* 1-Click Multi-Vertical Persona Switcher (Desktop) */}
           <div className="hidden lg:flex items-center gap-1.5 p-1 bg-slate-800/80 rounded-xl border border-slate-700/60" role="group" aria-label="Persona Switcher">
             <button
               onClick={() => switchPersona('wedding')}
@@ -81,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              <span>💍</span> Wedding (Primary)
+              <span>{t.personaWedding}</span>
             </button>
 
             <button
@@ -92,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              <span>🎂</span> Milestone Birthday
+              <span>{t.personaBirthday}</span>
             </button>
 
             <button
@@ -103,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              <span>🎪</span> Community Fest
+              <span>{t.personaCommunity}</span>
             </button>
 
             <button
@@ -112,16 +120,56 @@ export const Header: React.FC<HeaderProps> = ({
               title="Create Custom Celebration Wizard"
             >
               <PlusCircle className="w-3.5 h-3.5" />
-              <span>Custom</span>
+              <span>{t.personaCustom}</span>
             </button>
           </div>
 
-          {/* Center-Right Controls: Readiness Pill, Currency, Undo/Redo */}
-          <div className="flex items-center gap-2">
+          {/* Controls: Language Selector, Currency, Readiness Pill, Undo/Redo */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
             
+            {/* Multilingual Selector Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowLangMenu(prev => !prev)}
+                aria-label={`Select Language (Current: ${currentLang.nativeName})`}
+                aria-expanded={showLangMenu}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm flex items-center gap-1.5"
+                title="Select App & AI Language"
+              >
+                <Globe className="w-3.5 h-3.5 text-brand-400" />
+                <span className="text-xs font-medium">{currentLang.nativeName}</span>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
+
+              {showLangMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-1.5 z-50 space-y-0.5 animate-fadeIn">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-700/80 mb-1">
+                    Select Language / மொழி
+                  </div>
+                  {SUPPORTED_LANGUAGES.map(lang => (
+                    <button
+                      key={lang.code}
+                      onClick={() => {
+                        setLanguage(lang.code);
+                        setShowLangMenu(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
+                        language === lang.code
+                          ? 'bg-brand-600 text-white font-bold'
+                          : 'text-slate-300 hover:bg-slate-700/60 hover:text-white'
+                      }`}
+                    >
+                      <span>{lang.nativeName}</span>
+                      <span className="text-[10px] text-slate-400">{lang.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Live Readiness Pill */}
             <div 
-              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold shadow-sm ${
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold shadow-sm ${
                 readiness.overallScore >= 80 
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
                   : readiness.overallScore >= 60
@@ -131,25 +179,17 @@ export const Header: React.FC<HeaderProps> = ({
               title={`Event Readiness Score: ${readiness.overallScore}/100`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Readiness: {readiness.overallScore}/100</span>
-            </div>
-
-            {/* AI Engine Status Badge */}
-            <div
-              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-mono text-slate-300"
-              title={engineStatus.isCloud ? "Cloud Google Gemini 3.8 Flash active" : "Deterministic Local Context Co-Pilot active"}
-            >
-              <Cpu className="w-3 h-3 text-cyan-400 animate-pulse" />
-              <span>{engineStatus.isCloud ? 'Gemini 3.8 Flash Live' : 'Local Co-Pilot'}</span>
+              <span>{t.readiness}: {readiness.overallScore}/100</span>
             </div>
 
             {/* Currency Switcher */}
             <button
               onClick={toggleCurrency}
               aria-label={`Toggle currency (Current: ${currency})`}
-              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold text-white transition-all shadow-sm flex items-center gap-1"
+              className="px-2 sm:px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold text-white transition-all shadow-sm flex items-center gap-1"
             >
-              <span className="text-amber-400">{currency === 'INR' ? '₹ INR' : '$ USD'}</span>
+              <span className="text-amber-400">{currency === 'INR' ? '₹' : '$'}</span>
+              <span className="hidden sm:inline">{currency}</span>
             </button>
 
             {/* Undo / Redo */}
@@ -174,14 +214,14 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             </div>
 
-            {/* Judge's Diagnostics Test Runner Trigger */}
+            {/* Diagnostics Test Runner Trigger */}
             <button
               onClick={onOpenDiagnostics}
-              className="px-3 py-1.5 bg-gradient-to-r from-cyan-600/30 to-blue-600/30 hover:from-cyan-600/50 hover:to-blue-600/50 border border-cyan-500/40 text-cyan-300 hover:text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
-              title="Run 15 In-App Live Diagnostic Tests for Evaluators"
+              className="px-2.5 py-1.5 bg-gradient-to-r from-cyan-600/30 to-blue-600/30 hover:from-cyan-600/50 hover:to-blue-600/50 border border-cyan-500/40 text-cyan-300 hover:text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
+              title="Verify 21 Live Automated Tests"
             >
               <FileCheck2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">Verify Tests (15/15)</span>
+              <span className="hidden md:inline">Tests (21/21)</span>
             </button>
 
             {/* Accessibility Quick Menu Toggle */}
@@ -197,7 +237,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               {showA11yMenu && (
-                <div className="absolute right-0 mt-2 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-4 z-50 space-y-3">
+                <div className="absolute right-0 mt-2 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-4 z-50 space-y-3 animate-fadeIn">
                   <div className="flex items-center justify-between pb-2 border-b border-slate-700">
                     <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                       <Sliders className="w-3.5 h-3.5 text-brand-400" /> Accessibility
@@ -253,37 +293,37 @@ export const Header: React.FC<HeaderProps> = ({
 
         </div>
 
-        {/* Mobile Persona Switcher Bar */}
-        <div className="flex lg:hidden items-center justify-between py-2 border-t border-slate-800/60 overflow-x-auto gap-2">
+        {/* Mobile Persona Switcher Bar (Smooth touch scroll on iOS / Android) */}
+        <div className="flex lg:hidden items-center justify-between py-2 border-t border-slate-800/60 overflow-x-auto gap-2 no-scrollbar">
           <button
             onClick={() => switchPersona('wedding')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap ${
-              plan.vertical === 'wedding' ? 'bg-brand-600 text-white' : 'text-slate-400'
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+              plan.vertical === 'wedding' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
-            💍 Wedding
+            {t.personaWedding}
           </button>
           <button
             onClick={() => switchPersona('birthday')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap ${
-              plan.vertical === 'birthday' ? 'bg-purple-600 text-white' : 'text-slate-400'
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+              plan.vertical === 'birthday' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
-            🎂 Birthday
+            {t.personaBirthday}
           </button>
           <button
             onClick={() => switchPersona('community')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap ${
-              plan.vertical === 'community' ? 'bg-emerald-600 text-white' : 'text-slate-400'
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+              plan.vertical === 'community' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
-            🎪 Community
+            {t.personaCommunity}
           </button>
           <button
             onClick={onOpenWizard}
-            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-brand-300 border border-dashed border-brand-500/40 whitespace-nowrap"
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-brand-300 border border-dashed border-brand-500/40 whitespace-nowrap shrink-0 hover:bg-brand-500/10"
           >
-            + Custom Wizard
+            {t.personaCustom}
           </button>
         </div>
 

@@ -62,7 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
                   CelebraSphere<span className="text-brand-400">AI</span>
                 </span>
                 <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-500/10 text-brand-300 border border-brand-500/20">
-                  Google × H2S PromptWars
+                  Event Operations Platform
                 </span>
               </div>
               <p className="hidden md:block text-[11px] text-slate-400 truncate max-w-xs">

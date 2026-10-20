@@ -384,7 +384,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
 
         {/* Footer */}
         <div className="pt-3 border-t border-slate-800 flex justify-between items-center shrink-0 text-[11px] text-slate-400">
-          <span>Google for Developers × Hack2Skill PromptWars Evaluation Suite</span>
+          <span>Deterministic In-App Diagnostic & Verification Suite</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"

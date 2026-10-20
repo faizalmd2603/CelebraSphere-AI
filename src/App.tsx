@@ -68,7 +68,7 @@ export const AppContent: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-300">CelebraSphere AI</span>
             <span>&bull;</span>
-            <span>Google for Developers &times; Hack2Skill Virtual PromptWars (Challenge 5: Celebration & Event Planner)</span>
+            <span>Intelligent Celebration & Event Operations Platform</span>
           </div>
           <div className="flex items-center gap-1 text-slate-400">
             <span>Crafted with</span>

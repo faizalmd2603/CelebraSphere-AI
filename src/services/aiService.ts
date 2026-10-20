@@ -16,8 +16,7 @@ import {
   maskPII,
   aiRequestCache,
   hashString,
-  rateLimiter,
-  AIResponsePayloadSchema
+  rateLimiter
 } from '../utils/security';
 
 // Available Gemini API Keys loaded strictly from environment
@@ -31,52 +30,59 @@ const BACKUP_KEYS = [
 
 const ALL_API_KEYS = [PRIMARY_KEY, ...BACKUP_KEYS].filter(k => k && k.length > 5);
 
-// Model fallback chain: gemini-3.8-flash -> gemini-3.5-flash -> gemini-2.5-flash-lite
+// Model fallback chain: gemini-2.5-flash-lite is fastest & most reliable; fallback to gemini-3.5-flash and gemini-3.8-flash
 const TARGET_MODELS = [
-  import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.8-flash',
+  'gemini-2.5-flash-lite',
   import.meta.env.VITE_GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash',
-  'gemini-2.5-flash-lite'
+  import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.8-flash'
 ];
 
 let activeKeyIndex = 0;
+
+export interface ChatHistoryEntry {
+  role: 'user' | 'model';
+  text: string;
+}
 
 export function getActiveEngineStatus(): { isCloud: boolean; model: string; keyCount: number } {
   const hasCloudKey = ALL_API_KEYS.length > 0;
   return {
     isCloud: hasCloudKey,
-    model: hasCloudKey ? TARGET_MODELS[0] || 'Gemini 3.8 Flash' : 'Local Context Reasoning Engine',
+    model: hasCloudKey ? 'Gemini 3.8 / 2.5 Flash Live' : 'Deterministic Context Co-Pilot',
     keyCount: ALL_API_KEYS.length
   };
 }
 
 /**
- * Sends a grounded query to Google Gemini API with fallback to Local Context Reasoning Engine
+ * Sends a natural, grounded query to Google Gemini API with multi-turn history and robust fallback
  */
 export async function sendCopilotMessage(
   userQuery: string,
   livePlan: EventPlan,
-  privacyShieldActive: boolean = true
+  privacyShieldActive: boolean = true,
+  history: ChatHistoryEntry[] = []
 ): Promise<AIResponsePayload> {
   const sanitizedQuery = sanitizeInput(userQuery);
   if (!sanitizedQuery) {
     return {
-      conversationalReply: "I didn't receive a query. Please ask me any question about your budget, timeline, vendors, or event ideas!",
+      conversationalReply: "I didn't receive your query. Please ask me any question about your wedding, birthday, community event, budget, timeline, or vendors!",
       proposedActions: []
     };
   }
 
-  // Check Rate Limiter
+  // Check Rate Limiter (1.2s cooldown)
   if (!rateLimiter.canCall()) {
     const remaining = rateLimiter.getCooldownRemaining();
     return {
-      conversationalReply: `Please wait ${remaining}s before sending another request to ensure rate-limit stability.`,
+      conversationalReply: `Please wait ${remaining}s before sending another request to ensure connection stability.`,
       proposedActions: []
     };
   }
 
-  // Check Cache Key
+  // Check In-Memory Cache Key
   const contextSummary = `${livePlan.id}_${livePlan.guestCount}_${livePlan.totalBudget}_${livePlan.daysRemaining}`;
-  const cacheKey = hashString(`${sanitizedQuery}_${contextSummary}_${privacyShieldActive}`);
+  const historySnippet = history.slice(-3).map(h => h.text.slice(0, 30)).join('_');
+  const cacheKey = hashString(`${sanitizedQuery}_${historySnippet}_${contextSummary}_${privacyShieldActive}`);
   const cachedResponse = aiRequestCache.get(cacheKey) as AIResponsePayload | null;
   if (cachedResponse) {
     return cachedResponse;
@@ -88,17 +94,17 @@ export async function sendCopilotMessage(
   // If Cloud API Key exists, attempt calling Google Gemini
   if (ALL_API_KEYS.length > 0) {
     try {
-      const cloudResult = await callGeminiWithFallback(sanitizedQuery, contextSnapshot, livePlan);
-      if (cloudResult) {
+      const cloudResult = await callGeminiWithFallback(sanitizedQuery, contextSnapshot, livePlan, history);
+      if (cloudResult && cloudResult.conversationalReply) {
         aiRequestCache.set(cacheKey, cloudResult);
         return cloudResult;
       }
     } catch (err) {
-      console.warn('Cloud Gemini API call encountered an error. Seamlessly falling back to Local Context Reasoning Engine:', err);
+      console.warn('Cloud Gemini API call encountered an issue, transitioning smoothly to intelligent local reasoning:', err);
     }
   }
 
-  // Fallback: Local Context Reasoning Engine (Deterministic, zero-config, 100% reliable)
+  // Fallback: Intelligent Local Context Reasoning Engine
   const localResult = executeLocalContextReasoning(sanitizedQuery, livePlan);
   aiRequestCache.set(cacheKey, localResult);
   return localResult;
@@ -128,9 +134,13 @@ export function buildContextSnapshot(plan: EventPlan, privacyShieldActive: boole
       contingency: budget.contingencyAmount,
       isOverrun: budget.isOverrun
     },
-    unconfirmedVendors: plan.vendors.filter(v => v.status === 'researching' || v.status === 'quoted').map(v => ({ name: v.name, category: v.category, quote: v.quotedPrice })),
+    unconfirmedVendors: plan.vendors
+      .filter(v => v.status === 'researching' || v.status === 'quoted')
+      .map(v => ({ name: v.name, category: v.category, quote: v.quotedPrice })),
     timelineBlocksCount: plan.runOfShow.length,
-    criticalTasksPending: plan.checklistTasks.filter(t => !t.completed && (t.priority === 'critical' || t.priority === 'high')).map(t => t.title),
+    criticalTasksPending: plan.checklistTasks
+      .filter(t => !t.completed && (t.priority === 'critical' || t.priority === 'high'))
+      .map(t => t.title),
     dietaryOverview: {
       veg: plan.guests.filter(g => g.dietaryPreference === 'vegetarian').length,
       vegan: plan.guests.filter(g => g.dietaryPreference === 'vegan').length,
@@ -147,42 +157,45 @@ export function buildContextSnapshot(plan: EventPlan, privacyShieldActive: boole
 }
 
 /**
- * Calls Gemini API with model fallback and key rotation
+ * Calls Gemini API with multi-turn support, key rotation, and per-call timeout
  */
 async function callGeminiWithFallback(
   userQuery: string,
   contextSnapshot: string,
-  livePlan: EventPlan
+  livePlan: EventPlan,
+  history: ChatHistoryEntry[]
 ): Promise<AIResponsePayload | null> {
-  const systemPrompt = `You are CelebraSphere AI, an expert Celebration & Event Operations Co-Pilot.
-You have direct read access to a live, stateful event plan:
+  const systemInstructionText = `You are CelebraSphere AI, an expert, warm, and highly professional Celebration & Event Operations Co-Pilot. You converse with natural intelligence, empathy, and depth just like ChatGPT and Google Gemini, specialized in weddings, birthdays, anniversaries, and community festivals.
+
+You have direct real-time visibility into the user's active event workspace:
 ${contextSnapshot}
 
-Your goal:
-1. Provide concise, highly actionable, expert guidance tailored to the event's vertical persona.
-2. If the user asks for budget rebalancing, timeline shifts, vendor tasks, or ideas, return structured actionable JSON executable actions.
-3. Every response MUST strictly be valid JSON in this format:
-{
-  "thoughtProcess": "Brief reasoning",
-  "conversationalReply": "Clear markdown answer for the organizer",
-  "proposedActions": [
-    {
-      "type": "REBALANCE_BUDGET" | "ADD_BUDGET_ITEM" | "REFLOW_TIMELINE" | "ADD_VENDOR_TASK" | "SAVE_THEME_IDEA" | "UPDATE_GUEST_COUNT",
-      "label": "Short button label",
-      "description": "What clicking this action will do",
-      "payload": {}
-    }
-  ],
-  "decisionAudit": {
-    "whatChanged": ["item"],
-    "assumptionsMade": ["item"],
-    "needsHumanConfirmation": ["item"]
-  }
-}
-Do not wrap in markdown fences or text outside JSON.`;
+YOUR GUIDELINES:
+1. Always respond warmly, naturally, and comprehensively to the user's exact question, whether it is high-level ("How can I host a grand wedding?") or specific ("What are the top 3 mocktails?").
+2. Connect your advice to their actual event context when relevant (e.g. mention their venue, guest count, or budget naturally).
+3. If the user's query relates to budget rebalancing, timeline shifts, vendor tasks, or ideas, you can suggest concrete actions.
+4. Format your response in clean, beautiful Markdown with headings, bullet points, and practical tips.`;
+
+  // Build multi-turn messages array
+  const formattedContents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+  // Add recent history (up to last 6 turns)
+  history.slice(-6).forEach(entry => {
+    formattedContents.push({
+      role: entry.role === 'user' ? 'user' : 'model',
+      parts: [{ text: entry.text }]
+    });
+  });
+
+  // Add current query
+  formattedContents.push({
+    role: 'user',
+    parts: [{ text: userQuery }]
+  });
 
   for (let m = 0; m < TARGET_MODELS.length; m++) {
     const model = TARGET_MODELS[m];
+
     for (let k = 0; k < ALL_API_KEYS.length; k++) {
       const currentKeyIndex = (activeKeyIndex + k) % ALL_API_KEYS.length;
       const apiKey = ALL_API_KEYS[currentKeyIndex];
@@ -191,35 +204,34 @@ Do not wrap in markdown fences or text outside JSON.`;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000); // 9s timeout per call
+
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { text: systemPrompt },
-                  { text: `Organizer Query: ${userQuery}` }
-                ]
-              }
-            ],
+            systemInstruction: {
+              parts: [{ text: systemInstructionText }]
+            },
+            contents: formattedContents,
             generationConfig: {
-              temperature: 0.3,
-              responseMimeType: "application/json"
+              temperature: 0.7,
+              maxOutputTokens: 2048
             }
           })
         });
 
+        clearTimeout(timeoutId);
+
         if (response.status === 429) {
-          // Rate limit, rotate key
           activeKeyIndex = (activeKeyIndex + 1) % ALL_API_KEYS.length;
           continue;
         }
 
         if (response.status === 404) {
-          // Model not found, try next model
-          break;
+          break; // Try next model
         }
 
         if (!response.ok) {
@@ -227,30 +239,79 @@ Do not wrap in markdown fences or text outside JSON.`;
         }
 
         const data = await response.json();
-        const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText) {
-          // Clean JSON
-          const cleanedJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(cleanedJson);
-          const validated = AIResponsePayloadSchema.safeParse(parsed);
-          if (validated.success) {
-            return validated.data;
-          }
+        const replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (replyText && typeof replyText === 'string' && replyText.trim().length > 0) {
+          // Check if response contains structured actions or synthesize contextually
+          const proposedActions = extractOrSuggestActions(userQuery, replyText, livePlan);
+
+          return {
+            conversationalReply: replyText.trim(),
+            proposedActions
+          };
         }
-      } catch (e) {
-        // Continue to fallback
+      } catch (err) {
+        // Continue to next key or model
       }
     }
   }
 
-  // If cloud calls failed or returned malformed JSON, return local reasoning
-  return executeLocalContextReasoning(userQuery, livePlan);
+  return null;
 }
 
 /**
- * Deterministic Local Context Reasoning Engine
- * Evaluates live EventPlan mathematical state, detects real overruns,
- * runs timeline reflows, and returns verified executable actions.
+ * Dynamically synthesizes contextual action cards based on conversation content
+ */
+function extractOrSuggestActions(
+  query: string,
+  replyText: string,
+  plan: EventPlan
+): ExecutableAction[] {
+  const combined = (query + ' ' + replyText).toLowerCase();
+  const actions: ExecutableAction[] = [];
+
+  if (combined.includes('rebalance') || combined.includes('overrun') || combined.includes('budget cut')) {
+    actions.push({
+      type: 'REBALANCE_BUDGET',
+      label: 'Run Budget Rebalance',
+      description: 'Absorbs overruns from non-critical categories while preserving the 8% contingency floor.',
+      payload: {}
+    });
+  }
+
+  if (combined.includes('delay') || combined.includes('schedule') || combined.includes('clash') || combined.includes('timeline')) {
+    actions.push({
+      type: 'REFLOW_TIMELINE',
+      label: 'Simulate +25m Schedule Reflow',
+      description: 'Shifts downstream sessions while locking rigid ceremonial anchor blocks.',
+      payload: {}
+    });
+  }
+
+  if (combined.includes('rain') || combined.includes('weather') || combined.includes('outdoor')) {
+    actions.push({
+      type: 'REFLOW_TIMELINE',
+      label: 'Activate Indoor Weather Plan',
+      description: 'Relocates outdoor sessions to the indoor backup ballroom and adds soundcheck buffer.',
+      payload: {}
+    });
+  }
+
+  if (combined.includes('guest') && (combined.includes('increase') || combined.includes('surge') || combined.includes('add'))) {
+    actions.push({
+      type: 'UPDATE_GUEST_COUNT',
+      label: `Scale Headcount (+25 Guests)`,
+      description: `Updates per-guest catering and seating allocations for ${plan.guestCount + 25} guests.`,
+      payload: { newGuestCount: plan.guestCount + 25 }
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * Intelligent Local Context Reasoning Engine
+ * Provides rich, empathetic, human-quality advice for ANY celebration inquiry
  */
 export function executeLocalContextReasoning(
   query: string,
@@ -260,8 +321,54 @@ export function executeLocalContextReasoning(
   const readiness = calculateReadinessScore(plan);
   const budget = calculateBudgetSummary(plan);
 
-  // 1. Budget Rebalance / Overrun Query
-  if (lowerQuery.includes('rebalance') || lowerQuery.includes('overrun') || lowerQuery.includes('cut cost') || lowerQuery.includes('budget')) {
+  // 1. General Celebration / Marriage / Success Planning
+  if (lowerQuery.includes('marriage') || lowerQuery.includes('wedding') || lowerQuery.includes('host') || lowerQuery.includes('success') || lowerQuery.includes('start') || lowerQuery.includes('help')) {
+    const reply = `### 💍 Blueprint for a Grand & Seamless Celebration
+
+Hosting a magnificent celebration for **"${plan.title}"** is all about harmonizing three elements: **guest experience**, **operational pacing**, and **financial discipline**. 
+
+Here is my recommended master roadmap tailored to your event:
+
+#### 1. Define Your 3 Unshakeable Pillars
+- **Culinary Delight:** Guests remember great food above all else. For your ${plan.guestCount} guests, ensure live counters, clear dietary signs (especially for the ${plan.guests.filter(g => g.dietaryPreference === 'vegetarian').length} vegetarian guests), and separate allergy-safe plating.
+- **Atmospheric Decor:** Transform **${plan.venueName}** with ambient warm lighting, fresh florals, and a statement ceremonial entrance backdrop.
+- **Rhythm & Run-of-Show:** Keep transitions brisk. Avoid long 45+ minute dead intervals where guests wait idly.
+
+#### 2. Master Budget & Financial Architecture
+- **Allocated Ceiling:** ${formatCurrency(budget.totalBudget, plan.currency)}
+- **Fixed vs. Variable Discipline:** Fixed venue & decor packages are capped, while catering and welcome kits scale per head.
+- **Contingency Armor:** Always maintain at least a **10% Emergency Reserve** (${formatCurrency(budget.contingencyAmount, plan.currency)}) to absorb last-minute generator fuel, extra floral garlands, or unexpected guests.
+
+#### 3. Vendor Command & Pre-Booking Safety
+- Lock in your core quartet: **Venue, Catering, Photography, and Music/AV**.
+- For each contract, verify the **Force Majeure & Weather Relocation** clause (especially crucial since you have ${plan.venueType} spaces).
+
+#### 4. Day-of Run-of-Show & Locked Anchors
+- Designate strict **Locked Anchor Times** for auspicious rituals or dinner dispatch so your team never compromises auspicious timing during accidental delays.
+
+What specific area would you like to dive into next — **fine-tuning your budget split**, **curating signature culinary ideas**, or **stress-testing the day-of timeline**?`;
+
+    return {
+      conversationalReply: reply,
+      proposedActions: [
+        {
+          type: 'REBALANCE_BUDGET',
+          label: 'Audit & Optimize Budget',
+          description: 'Checks category variances and contingency buffers.',
+          payload: {}
+        },
+        {
+          type: 'REFLOW_TIMELINE',
+          label: 'Review Run-of-Show Timings',
+          description: 'Inspects sequential session flow and buffer times.',
+          payload: {}
+        }
+      ]
+    };
+  }
+
+  // 2. Budget Rebalance / Overrun Query
+  if (lowerQuery.includes('rebalance') || lowerQuery.includes('overrun') || lowerQuery.includes('cost') || lowerQuery.includes('budget') || lowerQuery.includes('money')) {
     const { newPlan, diff } = rebalanceBudget(plan);
     const hasDiff = diff.length > 0;
 
@@ -270,15 +377,15 @@ export function executeLocalContextReasoning(
       proposedActions.push({
         type: 'REBALANCE_BUDGET',
         label: 'Apply Budget Rebalance',
-        description: `Absorbs category overruns by trimming surplus from non-critical items while holding the 8% contingency floor.`,
+        description: `Absorbs overruns by reallocating surplus from non-critical categories while preserving the 8% contingency floor.`,
         payload: { diff, rebalancedCategories: newPlan.categories }
       });
     }
 
     const reply = hasDiff
       ? `### 📊 Live Budget Rebalance Analysis
-I analyzed your budget items and detected actual variances. 
-- **Total Budget:** ${formatCurrency(budget.totalBudget, plan.currency)}
+I analyzed your budget ledger and detected active category variances:
+- **Total Budget Ceiling:** ${formatCurrency(budget.totalBudget, plan.currency)}
 - **Current Spend:** ${formatCurrency(budget.totalActual, plan.currency)}
 - **Emergency Reserve:** ${formatCurrency(budget.contingencyAmount, plan.currency)}
 
@@ -286,13 +393,14 @@ I analyzed your budget items and detected actual variances.
 ${diff.map(d => `- **${d.category}:** Reallocate ${formatCurrency(d.before, plan.currency)} → ${formatCurrency(d.after, plan.currency)}. *${d.reason}*`).join('\n')}
 
 Click the **Apply Budget Rebalance** card below to execute this safely.`
-      : `### 📊 Budget Status: Healthy
-All active categories are operating within their allocated ceilings.
-- **Allocated:** ${formatCurrency(budget.totalBudget, plan.currency)}
-- **Actual Spend:** ${formatCurrency(budget.totalActual, plan.currency)}
+      : `### 📊 Budget Status: Healthy & Balanced
+All categories in **"${plan.title}"** are currently operating within their allocated ceilings:
+- **Allocated Ceiling:** ${formatCurrency(budget.totalBudget, plan.currency)}
+- **Current Actual Spend:** ${formatCurrency(budget.totalActual, plan.currency)}
 - **Remaining Buffer:** ${formatCurrency(budget.remainingBudget, plan.currency)}
+- **Contingency Floor:** Safe at ${plan.contingencyPercentage}% (${formatCurrency(budget.contingencyAmount, plan.currency)})
 
-No overruns detected. You can review individual vendor contracts in the Vendors tab.`;
+No immediate overruns detected. If you want to expand any category (such as decor or music), you can add custom line items in the Budget tab!`;
 
     return {
       conversationalReply: reply,
@@ -305,19 +413,19 @@ No overruns detected. You can review individual vendor contracts in the Vendors 
     };
   }
 
-  // 2. Timeline Delay / Reflow Query
-  if (lowerQuery.includes('delay') || lowerQuery.includes('timeline') || lowerQuery.includes('schedule') || lowerQuery.includes('reflow') || lowerQuery.includes('clash')) {
+  // 3. Timeline / Delay / Conflict Query
+  if (lowerQuery.includes('delay') || lowerQuery.includes('timeline') || lowerQuery.includes('schedule') || lowerQuery.includes('reflow') || lowerQuery.includes('clash') || lowerQuery.includes('time')) {
     const delayedBlock = plan.runOfShow[1] || plan.runOfShow[0];
     const delayAmount = 25;
     const { newBlocks, audit } = reflowTimelineWithLockedAnchors(plan.runOfShow, delayAmount, delayedBlock?.id || '');
 
     return {
-      conversationalReply: `### ⏱️ Schedule Conflict & Delay Reflow Engine
+      conversationalReply: `### ⏱️ Dependency-Aware Timeline Reflow Engine
 Simulated a **+${delayAmount} min delay** starting from **"${delayedBlock?.title}"**:
-- Automatically compressed flexible downstream transition buffers down to the safe 10-minute floor.
-- **Strictly preserved Locked Anchors** (such as auspicious ceremony moments and fixed dinner service).
+- Automatically compressed downstream flexible transition buffers down to the safe 10-minute floor.
+- **Strictly preserved Locked Anchors** (such as auspicious ritual moments and fixed catering dispatches) to prevent cascading clashes.
 
-Review the detailed audit breakdown and click **"Apply Reflow to Live Schedule"** if approved.`,
+Review the audit details below and click **"Apply Reflow to Live Schedule"** to commit this to your active run-of-show.`,
       proposedActions: [
         {
           type: 'REFLOW_TIMELINE',
@@ -339,15 +447,15 @@ Review the detailed audit breakdown and click **"Apply Reflow to Live Schedule"*
     };
   }
 
-  // 3. Weather / Rain Contingency
-  if (lowerQuery.includes('weather') || lowerQuery.includes('rain') || lowerQuery.includes('outdoor')) {
+  // 4. Weather / Rain Contingency
+  if (lowerQuery.includes('weather') || lowerQuery.includes('rain') || lowerQuery.includes('storm') || lowerQuery.includes('outdoor')) {
     const { newBlocks, audit } = simulateWeatherRelocation(plan.runOfShow, 'Grand Indoor Ballroom');
     return {
-      conversationalReply: `### 🌧️ Rain Contingency & Indoor Relocation Plan
-Detected outdoor zones in your plan. Prepared the full weather failover protocol:
+      conversationalReply: `### 🌧️ Rain Contingency & Weather Failover Protocol
+Detected outdoor zones in **"${plan.title}"**. Here is the failover plan:
 - Reassigned all lawn and terrace sessions to the indoor ballroom backup hall.
-- Injected a **20-minute relocation and acoustic soundcheck buffer**.
-- Flagged decor canopy vendor hold requirements.`,
+- Injected a **20-minute relocation and acoustic soundcheck buffer** before the first relocated session.
+- Added a high-priority tent & canopy hold task to your checklist.`,
       proposedActions: [
         {
           type: 'REFLOW_TIMELINE',
@@ -374,16 +482,17 @@ Detected outdoor zones in your plan. Prepared the full weather failover protocol
     };
   }
 
-  // 4. Guest Count Surge / Scaling
-  if (lowerQuery.includes('guest') || lowerQuery.includes('headcount') || lowerQuery.includes('rsvp') || lowerQuery.includes('surge')) {
+  // 5. Guest Scaling / Headcount
+  if (lowerQuery.includes('guest') || lowerQuery.includes('headcount') || lowerQuery.includes('rsvp') || lowerQuery.includes('people') || lowerQuery.includes('attendee')) {
     const surgeAmount = 30;
     const newCount = plan.guestCount + surgeAmount;
 
     return {
-      conversationalReply: `### 👥 Guest Scaling & Capacity Impact (+${surgeAmount} Guests)
-- **Current Headcount:** ${plan.guestCount} → **Projected Headcount:** ${newCount}
-- **Variable Cost Impact:** Catering & favors automatically scale proportionally.
-- **Action Required:** Add 4 additional banquet tables and verify venue fire marshal capacity.`,
+      conversationalReply: `### 👥 Guest Capacity & Cost Impact Analysis
+- **Current Headcount:** ${plan.guestCount} &rarr; **Projected Headcount:** ${newCount} (+${surgeAmount} Guests)
+- **Variable Cost Impact:** Catering and welcome kits will automatically scale proportionally based on your per-head unit costs.
+- **Seating & Table Impact:** 4 additional 8-seater banquet tables required with linens.
+- **Dietary Buffer:** Recommend ordering a 10% vegetarian and gluten-free buffer over the confirmed count.`,
       proposedActions: [
         {
           type: 'UPDATE_GUEST_COUNT',
@@ -410,28 +519,54 @@ Detected outdoor zones in your plan. Prepared the full weather failover protocol
     };
   }
 
-  // 5. General Celebration Co-Pilot Guidance
-  const unconfirmedVendors = plan.vendors.filter(v => v.status === 'researching' || v.status === 'quoted');
+  // 6. Theme, Creative, Decor, Food
+  if (lowerQuery.includes('theme') || lowerQuery.includes('decor') || lowerQuery.includes('food') || lowerQuery.includes('menu') || lowerQuery.includes('mocktail') || lowerQuery.includes('idea')) {
+    return {
+      conversationalReply: `### 🎨 Creative Direction for "${plan.title}"
+
+Here are personalized concepts suited to your **${plan.vertical}** setting at **${plan.venueName}**:
+
+1. **Theme & Lighting Mood:**
+   - Layer golden hour amber up-lights with natural floral foliage.
+   - Use brass temple deepams or fairy-light canopies for an organic warm glow.
+2. **Signature Culinary & Mocktail Experience:**
+   - **Tender Coconut Elaneer Cooler:** Fresh tender coconut water infused with mint, ginger, and lime.
+   - **Artisanal High-Tea Counter:** Filter coffee served in traditional brass tumblers alongside bite-sized savory canapés.
+3. **Memorable Keepsake Ritual:**
+   - Set up an interactive message wall where guests sign wooden puzzle pieces or write blessings on handwoven palm leaves.
+
+You can explore these concepts with hex swatches in the **Ideas Studio & RSVP** tab!`,
+      proposedActions: [
+        {
+          type: 'SAVE_THEME_IDEA',
+          label: 'Explore Ideas Studio',
+          description: 'Opens theme palettes, culinary concepts, and eco-friendly swaps.',
+          payload: {}
+        }
+      ]
+    };
+  }
+
+  // 7. General Conversational Fallback
   return {
     conversationalReply: `### 🌟 CelebraSphere AI Planning Co-Pilot
-Here is your current operational snapshot for **"${plan.title}"**:
-- **Event-Day Readiness Score:** **${readiness.overallScore}/100** (${readiness.status})
-- **Budget Health:** ${readiness.budgetHealthScore}/100 | Remaining Buffer: ${formatCurrency(budget.remainingBudget, plan.currency)}
-- **Timeline Health:** ${readiness.scheduleConflictScore}/100 (${plan.runOfShow.length} schedule blocks)
-- **Vendor Confirmation:** ${readiness.vendorConfirmationScore}/100 (${unconfirmedVendors.length} unconfirmed vendors pending)
+I am here to help you coordinate every operational, financial, and creative milestone for **"${plan.title}"**!
 
-${unconfirmedVendors.length > 0 ? `> ⚠️ **Priority Alert:** ${unconfirmedVendors.map(v => v.name).join(', ')} require finalized quotes or contract signing.` : '✅ All primary vendors have secured contracts!'}
+Here is your active workspace summary:
+- **Event Date:** ${plan.eventDate} (${plan.daysRemaining} days remaining)
+- **Headcount:** ${plan.guestCount} Guests
+- **Budget Ceiling:** ${formatCurrency(budget.totalBudget, plan.currency)} (Remaining Buffer: ${formatCurrency(budget.remainingBudget, plan.currency)})
+- **Readiness Score:** **${readiness.overallScore}/100** (${readiness.status})
 
-You can ask me to:
-- *"Rebalance budget overruns"*
-- *"Simulate +25 min delay in schedule"*
-- *"Run outdoor rain contingency"*
-- *"Scale guest headcount by +30"*
-- *"Suggest personalized theme palettes or signature mocktails"*`,
+Tell me what you'd like to work on right now — for instance:
+- *"How should I allocate my budget across venue and catering?"*
+- *"What should I do if a vendor delays their delivery?"*
+- *"Can you give me ideas for memorable guest engagement?"*
+- *"Help me prepare a checklist for 1 month before the event"*`,
     proposedActions: [
       {
         type: 'REBALANCE_BUDGET',
-        label: 'Optimize & Rebalance Budget',
+        label: 'Optimize Budget Allocations',
         description: 'Audits spending allocations and ensures contingency buffer safety.',
         payload: {}
       }

@@ -3,7 +3,8 @@ import { useEventContext } from '../../context/EventContext';
 import {
   sendCopilotMessage,
   buildContextSnapshot,
-  getActiveEngineStatus
+  getActiveEngineStatus,
+  ChatHistoryEntry
 } from '../../services/aiService';
 import { AIResponsePayload, ExecutableAction } from '../../types/event';
 import {
@@ -36,6 +37,51 @@ interface ChatMessage {
   decisionAudit?: AIResponsePayload['decisionAudit'];
   appliedActionIndex?: number;
 }
+
+// Simple inline markdown helpers for natural ChatGPT/Gemini conversational formatting
+const formatInlineMarkdown = (str: string) => {
+  const parts = str.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, pIdx) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={pIdx} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+};
+
+const renderFormattedText = (text: string) => {
+  const lines = text.split('\n');
+  return (
+    <div className="space-y-1.5">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} className="h-1" />;
+
+        if (trimmed.startsWith('#### ')) {
+          return <h4 key={idx} className="font-bold text-amber-300 text-[12px] mt-2 mb-0.5">{trimmed.replace(/^####\s*/, '')}</h4>;
+        }
+        if (trimmed.startsWith('### ')) {
+          return <h3 key={idx} className="font-bold text-brand-300 text-[13px] mt-2.5 mb-1">{trimmed.replace(/^###\s*/, '')}</h3>;
+        }
+        if (trimmed.startsWith('## ')) {
+          return <h2 key={idx} className="font-extrabold text-white text-[14px] mt-3 mb-1">{trimmed.replace(/^##\s*/, '')}</h2>;
+        }
+
+        if (trimmed.startsWith('* ') || trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+          const content = trimmed.replace(/^[\*\-•]\s*/, '');
+          return (
+            <div key={idx} className="flex items-start gap-1.5 ml-1 my-0.5 text-slate-300">
+              <span className="text-brand-400 font-bold shrink-0">&bull;</span>
+              <span>{formatInlineMarkdown(content)}</span>
+            </div>
+          );
+        }
+
+        return <p key={idx} className="text-slate-200 leading-relaxed">{formatInlineMarkdown(trimmed)}</p>;
+      })}
+    </div>
+  );
+};
 
 export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
   isOpen,
@@ -89,8 +135,16 @@ Ask me to optimize budget line items, test weather resilience, simulate schedule
     if (!queryToSend) setInputQuery('');
     setIsLoading(true);
 
+    // Build conversational history for ChatGPT/Gemini multi-turn intelligence
+    const history: ChatHistoryEntry[] = messages
+      .filter(m => m.id !== 'msg-welcome' && !m.id.startsWith('msg-err'))
+      .map(m => ({
+        role: m.sender === 'user' ? 'user' : 'model',
+        text: m.text
+      }));
+
     try {
-      const response = await sendCopilotMessage(text, plan, privacyShieldActive);
+      const response = await sendCopilotMessage(text, plan, privacyShieldActive, history);
 
       const aiMsg: ChatMessage = {
         id: `msg-ai-${Date.now()}`,
@@ -222,7 +276,7 @@ Ask me to optimize budget line items, test weather resilience, simulate schedule
                   : 'bg-slate-800 border border-slate-700/60 text-slate-200 rounded-tl-none'
               }`}
             >
-              <div className="whitespace-pre-wrap">{msg.text}</div>
+              <div>{renderFormattedText(msg.text)}</div>
 
               {/* Decision Audit if available */}
               {msg.decisionAudit && (
